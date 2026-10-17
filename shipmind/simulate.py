@@ -34,6 +34,17 @@ def simulated_model(role: str, key: str, heal_log: list) -> str:
     return "rules-engine (degraded)"
 
 
+def plan_carriers(alloc: dict, auctions: dict, issues: list[dict], greedy: bool) -> list[str]:
+    """Planner policy: follow the validator's machine-readable actions, else best (or cheapest as a draft)."""
+    overrides = {i["leg"]: i["action"]["carrier"] for i in issues if i["action"]["type"] == "use_carrier"}
+    carriers = []
+    for a in alloc["allocations"]:
+        auc = auctions[a["warehouse"]]
+        pick = (auc["cheapest"] if greedy else auc["best"]) or auc["cheapest"]
+        carriers.append(overrides.get(a["warehouse"]) or (pick["carrier"] if pick else "UPS"))
+    return carriers
+
+
 def process(order_spec: tuple, greedy_draft: bool) -> dict:
     t0, heal = time.perf_counter(), []
     oid, sku, qty, city, prio = order_spec
@@ -43,38 +54,27 @@ def process(order_spec: tuple, greedy_draft: bool) -> dict:
     if alloc["status"] != "ok":
         return {"id": oid, "status": "ESCALATED_BACKORDER", "heal": heal, "iterations": 0,
                 "ms": (time.perf_counter() - t0) * 1000, "model": planner_model, "complexity": order["complexity"]}
-    feedback, auctions, result = None, {}, None
+    review, auctions = None, {}
     for it in range(1, config.MAX_HEAL_ITERATIONS + 1):
-        if feedback and any(i["code"] == "sla_breach_origin" for i in feedback["issues"]):
-            alloc = logistics.allocate_inventory(sku, qty, city, avoid_disrupted=True)
+        issues = review["issues"] if review else []
+        realloc = next((i["action"] for i in issues if i["action"]["type"] == "reallocate"), None)
+        if realloc:
+            alloc = logistics.allocate_inventory(sku, qty, city, avoid_disrupted=realloc["avoid_disrupted"])
         for a in alloc["allocations"]:
             auctions[a["warehouse"]] = logistics.carrier_auction(
                 a["warehouse"], city, a["quantity"] * order["unit_weight_kg"], prio, order_id=f"{oid}:{it}", heal_log=heal)
-        carriers = []
-        for a in alloc["allocations"]:
-            auc = auctions[a["warehouse"]]
-            pick = (auc["cheapest"] if (greedy_draft and it == 1) else auc["best"]) or auc["cheapest"]
-            carriers.append(pick["carrier"] if pick else "UPS")
+        carriers = plan_carriers(alloc, auctions, issues, greedy_draft and it == 1)
         plan = logistics.build_plan(order, [a["warehouse"] for a in alloc["allocations"]],
                                     [a["quantity"] for a in alloc["allocations"]], carriers, auctions)
-        previous = feedback
-        feedback = logistics.validate_plan(plan, order, auctions)
-        if previous and not feedback["valid"] and feedback["issues"] == previous["issues"]:
-            log_event(heal, "no_progress", "same issues twice -> escalate early")
+        review = logistics.review_plan(plan, order, auctions, iteration=it, max_iterations=config.MAX_HEAL_ITERATIONS,
+                                       previous_issues=issues if it > 1 else None, heal_log=heal)
+        if review["terminal"]:
             break
-        if not feedback["valid"]:
-            for i in feedback["issues"]:
-                log_event(heal, "plan_rejected", f"{i['code']} -> {i['suggestion']}")
-            if not feedback["healable"]:
-                break
-            continue
-        result = logistics.dispatch(plan, order, auctions, heal_log=heal)
-        if result["status"] != "FAILED":
-            break
+    result = review["dispatch"] if review["decision"] in ("dispatched", "partial") else None
     if result:
         status = result["status"]
     else:
-        codes = {i["code"] for i in (feedback or {}).get("issues", [])}
+        codes = {i["code"] for i in review["issues"]}
         status = "ESCALATED_BACKORDER" if "insufficient_stock" in codes else "ESCALATED_SLA_INFEASIBLE" \
             if "sla_infeasible" in codes else "ESCALATED_NO_PROGRESS"
     return {"id": oid, "status": status, "heal": heal, "iterations": it, "model": planner_model,
@@ -94,6 +94,7 @@ def run_simulation(orders: int = 200, workers: int = 32, chaos: float = 0.2, see
     """Run a batch and return summary stats (used by the CLI and the demo dashboard)."""
     Chaos.configure(chaos, seed)
     BREAKER.reset()
+    logistics.clear_quote_cache()
     snapshot = copy.deepcopy(data.INVENTORY)
     for stock in data.INVENTORY.values():  # scale the network up for a big batch
         for wh in stock:

@@ -173,7 +173,10 @@ input[type=range] { accent-color: var(--hi); flex: 1; min-width: 100px; }
     <div class="line">
       <div class="st" data-agent="shipmind_concierge"><div class="dot"></div><b>Concierge</b><small>reads the request</small></div>
       <div class="seg"></div>
-      <div class="st" data-agent="intake_agent"><div class="dot"></div><b>Intake</b><small>order + complexity</small></div>
+      <div class="par">
+        <div class="st" data-agent="intake_agent"><div class="dot"></div><div><b>Intake</b><br><small>order + complexity</small></div></div>
+        <div class="st" data-agent="input_guardrail_agent"><div class="dot"></div><div><b>Guardrail</b><br><small>allow, clarify, block</small></div></div>
+      </div>
       <div class="seg"></div>
       <div class="par">
         <div class="st" data-agent="inventory_agent"><div class="dot"></div><div><b>Inventory</b><br><small>picks warehouses</small></div></div>
@@ -227,7 +230,10 @@ const NAMES = { shipmind_concierge: "Concierge", intake_agent: "Intake", invento
 const HEAL_LABELS = { retry: "Retried carrier API", carrier_unreachable: "Skipped unreachable carrier",
   circuit_open: "Circuit breaker skipped carrier", booking_failed: "Booking failed", carrier_failover: "Switched carrier",
   plan_rejected: "Plan rejected, re-planned", model_fallback: "Model fell back", tool_error: "Tool error corrected",
-  degraded_to_rules: "Fell back to rules engine", no_progress: "Stopped a stuck loop" };
+  degraded_to_rules: "Fell back to rules engine", no_progress: "Stopped a stuck loop",
+  escalated: "Escalated to ops", stock_conflict: "Stock taken by another order", quote_anomaly: "Rejected a bad quote",
+  carrier_timeout: "Dropped a slow carrier", idempotent_skip: "Prevented a double booking",
+  token_budget: "Token budget stopped spend" };
 const OUTCOME_COLORS = { DISPATCHED: "var(--ok)", PARTIAL: "var(--route)", ESCALATED_BACKORDER: "var(--heal)",
   ESCALATED_SLA_INFEASIBLE: "var(--bad)", ESCALATED_NO_PROGRESS: "var(--muted)", FAILED: "#7a1f1a" };
 const OUTCOME_NAMES = { DISPATCHED: "Shipped", PARTIAL: "Partly shipped", ESCALATED_BACKORDER: "Out of stock",
@@ -266,9 +272,10 @@ let order = [];
 function activate(agent) {
   const el = document.querySelector(`.st[data-agent="${agent}"]`);
   if (!el || el.classList.contains("active")) return;
-  const parallel = ["inventory_agent", "risk_agent"];
+  const groups = [["inventory_agent", "risk_agent"], ["intake_agent", "input_guardrail_agent"]];
+  const together = (a, b) => groups.some((g) => g.includes(a) && g.includes(b));
   document.querySelectorAll(".st.active").forEach((s) => {
-    if (parallel.includes(agent) && parallel.includes(s.dataset.agent)) return;
+    if (together(agent, s.dataset.agent)) return;
     s.classList.remove("active"); s.classList.add("done");
   });
   el.classList.remove("done"); el.classList.add("active");
@@ -326,7 +333,9 @@ function showResult(r) {
   if (ok) { end.classList.add("done"); document.querySelectorAll(".seg").forEach((s) => s.classList.add("lit")); }
   $("#doneSmall").textContent = ok ? `${(r.ms / 1000).toFixed(2)} s end to end` : "escalated";
   if (r.route) $("#plannerModel").textContent = r.route.replace(/^(\w+) \((.*)\)$/, "$2");
-  $("#routeTitle").textContent = ok ? `Shipped in ${(r.ms / 1000).toFixed(2)} s` : "Escalated to a person";
+  const rejected = (r.outcome || {}).status === "REJECTED";
+  $("#routeTitle").textContent = ok ? `Shipped in ${(r.ms / 1000).toFixed(2)} s`
+    : rejected ? "Rejected by guardrails: needs clarification" : "Escalated to a person";
   $("#loopTag").textContent = pass > 1 ? `Healed in ${pass} passes` : "Approved on the first pass";
   const ships = d.shipments || [];
   const legs = ships.map((s) => `${s.origin} → ${s.carrier} (${s.quantity})`).join(", ") || "–";
@@ -341,6 +350,7 @@ function showResult(r) {
       <dt>Complexity</dt><dd>${esc(o.complexity)}${o.complexity_reasons && o.complexity_reasons.length ? ": " + esc(o.complexity_reasons.join(", ")) : ""}</dd>
       <dt>Planner model</dt><dd>${esc(r.route || "–")}</dd>
       ${ok ? "" : `<dt>Reason</dt><dd>${esc(r.exit || "no valid plan")}</dd>`}
+      ${r.usage ? `<dt>LLM cost</dt><dd>${esc(r.usage.calls)} calls, ${esc(r.usage.total_tokens)} tokens, $${Number(r.usage.cost_usd).toFixed(4)}</dd>` : ""}
     </dl>
     ${ok ? `<div class="bars" aria-hidden="true"></div><div class="tid">${ships.map((s) => esc(s.tracking_id)).join("   ")}</div>` : ""}`;
   const heals = r.heals || [];

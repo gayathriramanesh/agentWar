@@ -18,27 +18,36 @@ Design choice: **workflow agents for control, LLM agents for judgment.** Sequent
 
 | Agent | Type | Model tier | Tools | Writes state |
 |---|---|---|---|---|
-| shipmind_concierge | LlmAgent | balanced | MCP: track_shipment, check_inventory, get_disruptions, list_warehouses | – |
-| intake_agent | LlmAgent | fast | save_order | order, complexity, order_summary |
-| inventory_agent | LlmAgent (parallel) | fast | MCP: allocate_inventory | inventory_report |
-| risk_agent | LlmAgent (parallel) | fast | MCP: get_disruptions | risk_report |
-| planner_agent | LlmAgent (loop) | **routed** by complexity | allocate_inventory, run_carrier_auction, submit_plan | auctions, plan, plan_summary |
-| validator_agent | LlmAgent (loop) | validator | validate_plan, dispatch_shipment, exit_loop | plan_valid, dispatch, feedback |
-| reporter_agent | LlmAgent | fast | notify_customer | final_report |
+| shipmind_concierge | LlmAgent | balanced (fast-routed for obvious orders) | MCP: track_shipment, check_inventory, get_disruptions, list_warehouses | – |
+| intake_agent | LlmAgent (parallel) | fast | save_order | order, complexity, order_summary, order_rejection |
+| input_guardrail_agent | LlmAgent (parallel), `output_schema=GuardrailVerdict` | fast | – | guardrail_verdict |
+| inventory_agent | BaseAgent (code, parallel) | – | – | allocation, inventory_report |
+| risk_agent | BaseAgent (code, parallel) | – | – | risk_report |
+| planner_agent | LlmAgent (loop) | rules fast path, or **routed** by complexity + budget | reallocate_inventory, run_carrier_auction, submit_plan | allocation, auctions, plan, plan_summary |
+| validator_agent | BaseAgent (code, loop) | – | `core.logistics.review_plan` | validation, feedback, dispatch, outcome, heal_iteration |
+| reporter_agent | LlmAgent | fast | notify_customer (claim-checked) | customer_notification, final_report |
+
+Gates: `start_order` (pipeline: reset per-order state + input screen), `require_valid_order` (execution: order valid
+**and** guardrail `allow`, fail closed), `fast_path_plan` (planner: rules engine for low/medium complexity).
+Per-order keys: `tools.ORDER_STATE`. Token accounting keys: `tokens_<agent>` (scoped by invocation).
 
 ## 3. Control loop
 
 ```
 iteration k:
-  planner:   (reallocate if told) → carrier auction per origin (parallel APIs) → submit_plan
-  validator: validate_plan
-             ├─ valid            → dispatch (retry → breaker → fail-over) → exit_loop ✓
-             ├─ healable issues  → "FEEDBACK: [leg X] code: msg -> suggestion" → iteration k+1
-             └─ not healable     → exit_loop("ESCALATED: ...")  (first pass, no wasted iterations)
+  planner:   k=1 and complexity <= FASTPATH_MAX_COMPLEXITY -> rules engine (0 LLM calls)
+             else LLM: apply validator actions (reallocate / use_carrier) -> auctions -> submit_plan
+  validator: review_plan (code)
+             ├─ valid            → reserve stock + book (fail-over) → DISPATCHED / PARTIAL → escalate ✓
+             ├─ healable issues  → structured issues {code, leg, action} → iteration k+1
+             ├─ same issues as k-1, or k = max → ESCALATED (no wasted iterations)
+             └─ not healable     → ESCALATED on the first pass
 max_iterations = SHIPMIND_MAX_HEAL_ITERATIONS (default 3)
 ```
 
-Issue codes: `sla_breach` (swap carrier), `sla_breach_origin` (reallocate away from a disrupted site), `carrier_unavailable`, `stock`, `quantity_mismatch` (all healable); `insufficient_stock` and `sla_infeasible` (escalate).
+Issue codes and actions: `sla_breach` / `carrier_unavailable` → `use_carrier`; `sla_breach_origin`, `stock`,
+`quantity_mismatch`, `duplicate_origin`, `bad_quantity`, `unknown_origin`, `empty_plan` → `reallocate`;
+`stale_quote`, `dispatch_failed` → `rerun_auction`; `insufficient_stock`, `sla_infeasible` → `escalate`.
 
 ## 4. Complexity score → model route
 
@@ -50,7 +59,7 @@ Issue codes: `sla_breach` (swap carrier), `sla_breach_origin` (reallocate away f
 | disrupted origin | +1 |
 | heavy freight (>30 kg) | +1 |
 
-`≥3 = high` → deep model chain; otherwise balanced chain. It's computed deterministically in `save_order`, so routing costs zero LLM calls. A `before_model_callback` sets a context variable that `ComplexityRoutedModel` reads to pick its delegate.
+`≥3 = high` → deep model chain; otherwise balanced chain (or the rules fast path on the first pass). It's computed deterministically in `save_order`, so routing costs zero LLM calls. A `before_model_callback` sets a context variable that `ComplexityRoutedModel` reads to pick its delegate.
 
 ## 5. Carrier scoring
 For each available quote, with weights per priority (express favours ETA, economy favours price):
@@ -59,24 +68,25 @@ For each available quote, with weights per priority (express favours ETA, econom
 
 `best` is the lowest-scoring SLA-compliant quote; `cheapest` is kept for comparison. Loads over a carrier's parcel limit are quoted as multi-piece (up to 4 parcels).
 
-## 6. Latency budget (live Gemini, typical order)
+## 6. Latency and token budget (live Gemini, routine order)
 
 | Step | LLM calls | Notes |
 |---|---|---|
-| concierge → transfer | 1 | |
-| intake | 2 | tool call + summary |
-| parallel recon | 2 × 2 | inventory ∥ risk, wall time of one |
-| planner | 2–3 | auctions run as parallel function calls in one turn |
-| validator | 3–4 | validate → dispatch → exit → text |
-| reporter | 2 | |
+| concierge | 0 | fast route for obvious new orders (1 for questions / ambiguity) |
+| intake ∥ guardrail | 1 + 1 | parallel; `save_order` ends the turn (`skip_summarization`) |
+| recon | 0 | deterministic agents |
+| planner | 0 | rules fast path (2–3 when re-planning or complexity = high) |
+| validator | 0 | deterministic `review_plan` |
+| reporter | 1 | `notify_customer` ends the turn; ops report built by code |
 
-Roughly 8–12 sequential model calls on flash-tier models. Carrier I/O adds ~40–120 ms per auction because all carriers are called concurrently. The MCP subprocess starts once (~1–2 s) and is then reused.
-
-**If you need more speed:** set `SHIPMIND_USE_MCP=false` to skip IPC; drop the risk agent for non-express orders; or run intake on the fast model with `include_contents="none"`.
+**3 LLM calls, 2 sequential model round-trips** (was ~16 calls). Carrier I/O adds ~40–120 ms per auction
+(all carriers concurrently, async tool, deadline `SHIPMIND_AUCTION_TIMEOUT_MS`, quotes cached for
+`SHIPMIND_QUOTE_CACHE_TTL_S`). Booking runs legs in parallel. The MCP subprocess (concierge only) starts once.
+Every LLM call is accounted (`economics.py`) against `SHIPMIND_TOKEN_BUDGET_PER_ORDER`.
 
 ## 7. Scaling to Amazon volume
 - Stateless agent workers behind a Pub/Sub (or Kafka) order queue; one ADK session per order.
 - `DatabaseSessionService` (or Vertex AI sessions) instead of in-memory.
 - MCP server over streamable HTTP as a shared service; carrier clients with connection pooling.
-- Reserve inventory atomically at allocation (fixes the race visible as `ESCALATED_NO_PROGRESS` in `simulate.py`).
+- Stock is reserved atomically at booking (no overselling); move inventory into the shared store so the MCP server sees bookings.
 - Route ~90% of orders (low complexity) through a rules fast-path and send only exceptions to the full agent loop. The simulator shows the engine alone handles 100+ orders/s per process.

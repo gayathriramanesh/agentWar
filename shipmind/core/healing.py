@@ -1,6 +1,7 @@
 """Self-healing primitives: retry with exponential backoff, circuit breaker, and a heal log."""
 from __future__ import annotations
 
+import random
 import threading
 import time
 from typing import Callable, TypeVar
@@ -14,12 +15,13 @@ def log_event(heal_log: list | None, kind: str, detail: str) -> None:
 
 
 class CircuitBreaker:
-    """Stops hammering a failing dependency; half-opens after a cooldown to probe recovery."""
+    """Stops hammering a failing dependency; after a cooldown exactly ONE probe call tests recovery."""
 
     def __init__(self, threshold: int = 3, cooldown_s: float = 5.0):
         self.threshold, self.cooldown_s = threshold, cooldown_s
         self._fails: dict[str, int] = {}
         self._opened: dict[str, float] = {}
+        self._probing: set[str] = set()
         self._lock = threading.Lock()
 
     def allow(self, name: str) -> bool:
@@ -27,9 +29,8 @@ class CircuitBreaker:
             opened = self._opened.get(name)
             if opened is None:
                 return True
-            if time.time() - opened >= self.cooldown_s:  # half-open: let one probe through
-                del self._opened[name]
-                self._fails[name] = self.threshold - 1
+            if name not in self._probing and time.time() - opened >= self.cooldown_s:
+                self._probing.add(name)  # half-open: this caller is the single probe
                 return True
             return False
 
@@ -37,17 +38,20 @@ class CircuitBreaker:
         with self._lock:
             self._fails[name] = 0
             self._opened.pop(name, None)
+            self._probing.discard(name)
 
     def failure(self, name: str) -> None:
         with self._lock:
             self._fails[name] = self._fails.get(name, 0) + 1
-            if self._fails[name] >= self.threshold:
-                self._opened[name] = time.time()
+            if name in self._probing or self._fails[name] >= self.threshold:
+                self._opened[name] = time.time()  # (re)open; a failed probe restarts the cooldown
+            self._probing.discard(name)
 
     def reset(self) -> None:
         with self._lock:
             self._fails.clear()
             self._opened.clear()
+            self._probing.clear()
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -59,7 +63,10 @@ BREAKER = CircuitBreaker()
 
 def retry(fn: Callable[[int], T], *, attempts: int = 3, base_delay_s: float = 0.02, label: str = "",
           heal_log: list | None = None, retry_on: tuple = (Exception,)) -> T:
-    """Call fn(attempt) until it succeeds. Backoff 20ms, 40ms, ... kept tiny to protect latency."""
+    """Call fn(attempt) until it succeeds. Jittered backoff ~20ms, ~40ms, ... kept tiny to protect latency.
+
+    Jitter stops many concurrent orders from retrying a recovering carrier in lockstep (thundering herd).
+    """
     last: Exception | None = None
     for attempt in range(attempts):
         try:
@@ -68,6 +75,6 @@ def retry(fn: Callable[[int], T], *, attempts: int = 3, base_delay_s: float = 0.
             last = e
             if attempt < attempts - 1:
                 log_event(heal_log, "retry", f"{label} attempt {attempt + 1} failed ({e}); backing off")
-                time.sleep(base_delay_s * 2 ** attempt)
+                time.sleep(base_delay_s * 2 ** attempt * random.uniform(0.5, 1.0))
     assert last is not None
     raise last
