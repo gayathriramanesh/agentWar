@@ -1,0 +1,6 @@
+# Python 3.10+
+google-adk==2.12.0        # verified version (FallbackModel, McpToolset, LoopAgent)
+mcp>=1.9                  # server supports both mcp 1.x (FastMCP) and 2.x (MCPServer)
+python-dotenv>=1.0
+pytest>=8.0
+# litellm                 # optional: only for non-Gemini validator models
