@@ -1,6 +1,8 @@
-.PHONY: setup test demo chaos sim web mcp
+.PHONY: setup test ui demo chaos sim web mcp
 setup:   ## create venv + install deps
 	python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt && cp -n .env.example .env || true
+ui:      ## demo dashboard on http://localhost:8080
+	python demo_server.py
 test:    ## 10 tests: engine, MCP server, full ADK pipeline (mock LLM)
 	python -m pytest -q
 demo:    ## real ADK runtime, 3 scenarios (mock LLM if no key)

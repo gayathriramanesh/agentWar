@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShipMind dispatch board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #e8ecf1; --panel: #f7f9fb; --ink: #13202f; --muted: #5b6878; --line: #c5cdd8;
+  --hi: #f26b1d; --hi-ink: #ffffff; --route: #2f6fdb; --ok: #17865c; --heal: #b98200; --heal-bg: #fff3d1;
+  --bad: #c2362f; --label: #ffffff;
+  --sans: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --cond: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0f1a2a; --panel: #16243a; --ink: #e6ecf3; --muted: #93a2b5; --line: #2b3d57;
+    --hi: #ff7a2e; --hi-ink: #1a0d03; --route: #6c9df2; --ok: #3fc48c; --heal: #f0bf3a; --heal-bg: #3a2f10;
+    --bad: #f0675f; --label: #1c2d47;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 var(--sans); }
+main { max-width: 1240px; margin: 0 auto; padding: 28px 24px 64px; }
+h1, h2, h3 { font-family: var(--cond); font-weight: 700; line-height: 1.05; margin: 0; }
+button, input, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--route); outline-offset: 2px; }
+
+/* header */
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 24px; margin-bottom: 22px; }
+.top h1 { font-size: clamp(2.2rem, 5vw, 3.4rem); letter-spacing: -0.01em; }
+.top h1 span { color: var(--hi); }
+.top p { margin: 0; color: var(--muted); flex: 1 1 260px; }
+.mode { font-family: var(--cond); font-weight: 600; font-size: 1.05rem; padding: 4px 12px; border-radius: 999px;
+        border: 2px solid var(--line); white-space: nowrap; }
+.mode.live { border-color: var(--ok); color: var(--ok); }
+
+/* composer */
+.composer { display: grid; grid-template-columns: repeat(3, 1fr) 1.3fr; gap: 12px; margin-bottom: 26px; }
+.ticket { text-align: left; background: var(--panel); border: 2px solid var(--line); border-radius: 6px; padding: 12px 14px;
+          cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
+.ticket:hover { border-color: var(--route); }
+.ticket[aria-pressed="true"] { border-color: var(--hi); box-shadow: inset 4px 0 0 var(--hi); }
+.ticket strong { font-family: var(--cond); font-size: 1.25rem; font-weight: 600; }
+.ticket small { color: var(--muted); }
+.custom { background: var(--panel); border: 2px solid var(--line); border-radius: 6px; padding: 12px 14px;
+          display: flex; flex-direction: column; gap: 8px; }
+.custom textarea { width: 100%; resize: vertical; min-height: 56px; border: 1px solid var(--line); border-radius: 4px;
+                   background: transparent; padding: 6px 8px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.row label { color: var(--muted); font-size: 0.95rem; }
+input[type=range] { accent-color: var(--hi); flex: 1; min-width: 100px; }
+.go { background: var(--hi); color: var(--hi-ink); border: 0; border-radius: 4px; padding: 10px 18px; cursor: pointer;
+      font-family: var(--cond); font-weight: 700; font-size: 1.2rem; }
+.go:disabled { opacity: 0.5; cursor: progress; }
+
+/* route line: the centrepiece */
+.route { position: relative; background: var(--panel); border-radius: 8px; padding: 26px 22px 30px; margin-bottom: 22px;
+         border: 2px solid var(--line); }
+.route h2 { font-size: 1.15rem; color: var(--muted); font-weight: 600; margin-bottom: 18px; }
+.line { display: flex; align-items: center; gap: 0; }
+.seg { flex: 1 1 18px; min-width: 18px; height: 6px; background: var(--line); border-radius: 3px; transition: background .3s; }
+.seg.lit { background: var(--route); }
+.st { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 92px; text-align: center; }
+.dot { width: 30px; height: 30px; border-radius: 50%; border: 5px solid var(--line); background: var(--panel); transition: all .25s; }
+.st.active .dot { border-color: var(--hi); background: var(--hi); box-shadow: 0 0 0 7px color-mix(in srgb, var(--hi) 25%, transparent); }
+.st.done .dot { border-color: var(--route); background: var(--route); }
+.st.healed .dot { border-color: var(--heal); }
+.st b { font-family: var(--cond); font-weight: 600; font-size: 1.1rem; line-height: 1.1; }
+.st small { color: var(--muted); font-size: 0.82rem; line-height: 1.25; max-width: 120px; }
+.par { display: flex; flex-direction: column; gap: 14px; padding: 8px 10px; border-left: 3px solid var(--line);
+       border-right: 3px solid var(--line); border-radius: 10px; }
+.par .st { flex-direction: row; text-align: left; min-width: 0; }
+.loop { display: flex; align-items: center; padding: 12px 10px 30px; border: 3px dashed var(--line); border-radius: 18px;
+        position: relative; transition: border-color .3s, background .3s; }
+.loop.healing { border-color: var(--heal); background: var(--heal-bg); }
+.loop .tag { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; font-size: 0.85rem; color: var(--muted); }
+.loop.healing .tag { color: var(--heal); font-weight: 600; }
+.end .dot { border-radius: 4px; }
+
+/* lower grid */
+.grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 22px; align-items: start; }
+.panel { background: var(--panel); border: 2px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+.panel h2 { font-size: 1.5rem; margin-bottom: 12px; }
+.trace { max-height: 520px; overflow: auto; font-size: 0.92rem; display: flex; flex-direction: column; gap: 2px; }
+.ev { display: grid; grid-template-columns: 58px 104px 1fr; gap: 10px; padding: 5px 6px; border-radius: 4px; }
+.ev .t { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.ev .a { font-family: var(--cond); font-weight: 600; }
+.ev .d { overflow-wrap: anywhere; }
+.ev.call .d::before { content: "calls "; color: var(--muted); }
+.ev.response .d::before { content: "returns "; color: var(--muted); }
+.ev.heal { background: var(--heal-bg); }
+.ev.heal .a { color: var(--heal); }
+.ev.ok .a { color: var(--ok); }
+.empty { color: var(--muted); }
+
+/* shipping label */
+.label { background: var(--label); border: 2px solid var(--ink); border-radius: 4px; padding: 0; overflow: hidden; }
+.label .head { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px; border-bottom: 2px solid var(--ink); }
+.label .head h3 { font-size: 1.6rem; }
+.status { font-family: var(--cond); font-weight: 700; font-size: 1.3rem; }
+.status.ok { color: var(--ok); } .status.esc { color: var(--bad); }
+.label dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; padding: 14px 16px; }
+.label dt { color: var(--muted); }
+.label dd { margin: 0; font-weight: 500; }
+.bars { height: 46px; margin: 0 16px 14px; background:
+  repeating-linear-gradient(90deg, var(--ink) 0 2px, transparent 2px 4px, var(--ink) 4px 7px, transparent 7px 9px, var(--ink) 9px 10px, transparent 10px 13px); }
+.tid { text-align: center; font-family: var(--cond); font-size: 1.1rem; letter-spacing: 0.08em; padding-bottom: 12px; }
+.heals { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.heals li { border-left: 4px solid var(--heal); padding: 4px 10px; background: var(--heal-bg); border-radius: 0 4px 4px 0; font-size: 0.92rem; }
+.heals li b { font-family: var(--cond); font-weight: 600; font-size: 1.02rem; }
+
+/* scale */
+.scale { margin-top: 22px; }
+.scale .row { margin-bottom: 14px; }
+.stack { display: flex; height: 34px; border-radius: 4px; overflow: hidden; margin: 6px 0 10px; }
+.stack div { display: flex; align-items: center; padding-left: 8px; color: #fff; font-weight: 600; font-size: 0.85rem; white-space: nowrap; overflow: hidden; }
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+.metric b { display: block; font-family: var(--cond); font-size: 2rem; font-weight: 700; line-height: 1; }
+.metric span { color: var(--muted); font-size: 0.9rem; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.88rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+
+@media (max-width: 960px) {
+  .composer { grid-template-columns: 1fr 1fr; }
+  .grid { grid-template-columns: 1fr; }
+  .line { flex-direction: column; align-items: stretch; }
+  .seg { height: 18px; width: 6px; min-height: 14px; flex: 0 0 18px; align-self: center; }
+  .st { flex-direction: row; text-align: left; gap: 12px; }
+  .loop { flex-direction: column; align-items: stretch; }
+  .par { border-left: 0; border-right: 0; border-top: 3px solid var(--line); border-bottom: 3px solid var(--line); }
+  .metrics { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 560px) { .composer { grid-template-columns: 1fr; } .ev { grid-template-columns: 48px 1fr; } .ev .d { grid-column: 2; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <h1>Ship<span>Mind</span></h1>
+    <p>Seven Google ADK agents take an order from request to booked shipment, and fix their own failures on the way.</p>
+    <span class="mode" id="mode">Connecting…</span>
+  </header>
+
+  <section class="composer" aria-label="Choose an order">
+    <button class="ticket" data-prompt="Ship 1 Kindle to Boston, economy please. Order ORD-2001." aria-pressed="true">
+      <strong>1 Kindle → Boston</strong><small>Economy. The cheapest carrier can’t make the 8-day promise.</small>
+    </button>
+    <button class="ticket" data-prompt="Urgent: 3 laptops to Austin, express, order ORD-2002." aria-pressed="false">
+      <strong>3 laptops → Austin</strong><small>Express. The nearest warehouse, Dallas, is in a storm.</small>
+    </button>
+    <button class="ticket" data-prompt="We need 8 TV65 units delivered to Chicago, standard shipping, ORD-2003." aria-pressed="false">
+      <strong>8 TVs → Chicago</strong><small>Standard. Heavy freight split across two warehouses.</small>
+    </button>
+    <div class="custom">
+      <textarea id="prompt" aria-label="Order request">Ship 1 Kindle to Boston, economy please. Order ORD-2001.</textarea>
+      <div class="row">
+        <label for="chaos">API failures <output id="chaosOut">0%</output></label>
+        <input id="chaos" type="range" min="0" max="0.5" step="0.05" value="0">
+        <button class="go" id="go">Dispatch order</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="route" aria-label="Agent route">
+    <h2 id="routeTitle">Waiting for an order</h2>
+    <div class="line">
+      <div class="st" data-agent="shipmind_concierge"><div class="dot"></div><b>Concierge</b><small>reads the request</small></div>
+      <div class="seg"></div>
+      <div class="st" data-agent="intake_agent"><div class="dot"></div><b>Intake</b><small>order + complexity</small></div>
+      <div class="seg"></div>
+      <div class="par">
+        <div class="st" data-agent="inventory_agent"><div class="dot"></div><div><b>Inventory</b><br><small>picks warehouses</small></div></div>
+        <div class="st" data-agent="risk_agent"><div class="dot"></div><div><b>Risk</b><br><small>storms, outages</small></div></div>
+      </div>
+      <div class="seg"></div>
+      <div class="loop" id="loop">
+        <div class="st" data-agent="planner_agent"><div class="dot"></div><b>Planner</b><small id="plannerModel">carrier auction</small></div>
+        <div class="seg"></div>
+        <div class="st" data-agent="validator_agent"><div class="dot"></div><b>Validator</b><small>checks, books</small></div>
+        <span class="tag" id="loopTag">Plan, check, heal: up to 3 passes</span>
+      </div>
+      <div class="seg"></div>
+      <div class="st" data-agent="reporter_agent"><div class="dot"></div><b>Reporter</b><small>tells the customer</small></div>
+      <div class="seg"></div>
+      <div class="st end" data-agent="__done"><div class="dot"></div><b>Shipped</b><small id="doneSmall">–</small></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Live trace</h2>
+      <div class="trace" id="trace" aria-live="polite"><p class="empty">Choose an order above and dispatch it. Every agent step, tool call and API call shows up here as it happens.</p></div>
+    </div>
+    <div>
+      <div class="label" id="label">
+        <div class="head"><h3>No shipment yet</h3><span class="status">–</span></div>
+        <dl><dt>Order</dt><dd>Dispatch an order to print its label.</dd></dl>
+      </div>
+      <ul class="heals" id="heals"></ul>
+    </div>
+  </section>
+
+  <section class="panel scale" aria-label="Scale test">
+    <h2>Scale test</h2>
+    <div class="row">
+      <label for="orders">Orders</label>
+      <input id="orders" type="range" min="100" max="2000" step="100" value="1000"><output id="ordersOut">1000</output>
+      <label for="chaos2">API failures</label>
+      <input id="chaos2" type="range" min="0" max="0.5" step="0.05" value="0.35"><output id="chaos2Out">35%</output>
+      <button class="go" id="sim">Run batch</button>
+    </div>
+    <div id="simOut"><p class="empty">Runs hundreds of concurrent orders through the same engine with injected carrier and model failures.</p></div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const NAMES = { shipmind_concierge: "Concierge", intake_agent: "Intake", inventory_agent: "Inventory", risk_agent: "Risk",
+  planner_agent: "Planner", validator_agent: "Validator", reporter_agent: "Reporter" };
+const HEAL_LABELS = { retry: "Retried carrier API", carrier_unreachable: "Skipped unreachable carrier",
+  circuit_open: "Circuit breaker skipped carrier", booking_failed: "Booking failed", carrier_failover: "Switched carrier",
+  plan_rejected: "Plan rejected, re-planned", model_fallback: "Model fell back", tool_error: "Tool error corrected",
+  degraded_to_rules: "Fell back to rules engine", no_progress: "Stopped a stuck loop" };
+const OUTCOME_COLORS = { DISPATCHED: "var(--ok)", PARTIAL: "var(--route)", ESCALATED_BACKORDER: "var(--heal)",
+  ESCALATED_SLA_INFEASIBLE: "var(--bad)", ESCALATED_NO_PROGRESS: "var(--muted)", FAILED: "#7a1f1a" };
+const OUTCOME_NAMES = { DISPATCHED: "Shipped", PARTIAL: "Partly shipped", ESCALATED_BACKORDER: "Out of stock",
+  ESCALATED_SLA_INFEASIBLE: "Promise impossible", ESCALATED_NO_PROGRESS: "Stock race", FAILED: "Failed" };
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  const m = $("#mode");
+  m.textContent = c.mock ? "Mock data, scripted models" : "Live Gemini, mock data";
+  if (!c.mock) m.classList.add("live");
+  m.title = Object.entries(c.models).map(([k, v]) => `${k}: ${v}`).join("\n");
+}).catch(() => { $("#mode").textContent = "Server offline: run python demo_server.py"; });
+
+document.querySelectorAll(".ticket").forEach((t) => t.addEventListener("click", () => {
+  document.querySelectorAll(".ticket").forEach((x) => x.setAttribute("aria-pressed", "false"));
+  t.setAttribute("aria-pressed", "true");
+  $("#prompt").value = t.dataset.prompt;
+}));
+const pct = (v) => `${Math.round(v * 100)}%`;
+$("#chaos").addEventListener("input", (e) => ($("#chaosOut").textContent = pct(e.target.value)));
+$("#chaos2").addEventListener("input", (e) => ($("#chaos2Out").textContent = pct(e.target.value)));
+$("#orders").addEventListener("input", (e) => ($("#ordersOut").textContent = e.target.value));
+
+function resetBoard() {
+  document.querySelectorAll(".st").forEach((s) => s.classList.remove("active", "done", "healed"));
+  document.querySelectorAll(".seg").forEach((s) => s.classList.remove("lit"));
+  $("#loop").classList.remove("healing");
+  $("#loopTag").textContent = "Plan, check, heal: up to 3 passes";
+  $("#plannerModel").textContent = "carrier auction";
+  $("#doneSmall").textContent = "–";
+  $("#trace").innerHTML = "";
+  $("#heals").innerHTML = "";
+}
+
+let order = [];
+function activate(agent) {
+  const el = document.querySelector(`.st[data-agent="${agent}"]`);
+  if (!el || el.classList.contains("active")) return;
+  const parallel = ["inventory_agent", "risk_agent"];
+  document.querySelectorAll(".st.active").forEach((s) => {
+    if (parallel.includes(agent) && parallel.includes(s.dataset.agent)) return;
+    s.classList.remove("active"); s.classList.add("done");
+  });
+  el.classList.remove("done"); el.classList.add("active");
+  if (!order.includes(agent)) order.push(agent);
+  const stations = [...document.querySelectorAll(".line .st")];
+  const segs = [...document.querySelectorAll(".line .seg")];
+  const idx = stations.indexOf(el);
+  // light every segment that sits before this station in document order
+  segs.forEach((s) => { if (s.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) s.classList.add("lit"); });
+  if (idx < 0) return;
+}
+
+function addEvent(ev, cls) {
+  const div = document.createElement("div");
+  div.className = `ev ${ev.type} ${cls || ""}`;
+  const what = ev.type === "text" ? ev.detail : `${ev.name}(${ev.type === "call" ? ev.detail : ""})${ev.type === "response" ? " " + ev.detail : ""}`;
+  div.innerHTML = `<span class="t">${ev.ms} ms</span><span class="a">${esc(NAMES[ev.agent] || ev.agent)}</span><span class="d">${esc(what)}</span>`;
+  const tr = $("#trace"); tr.appendChild(div); tr.scrollTop = tr.scrollHeight;
+}
+
+let pass = 0;
+$("#go").addEventListener("click", () => {
+  resetBoard(); order = []; pass = 0;
+  $("#go").disabled = true; $("#go").textContent = "Dispatching…";
+  $("#routeTitle").textContent = "Routing the order";
+  const src = new EventSource(`/api/run?prompt=${encodeURIComponent($("#prompt").value)}&chaos=${$("#chaos").value}`);
+  let lastAgent = null;
+  src.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "done") { src.close(); $("#go").disabled = false; $("#go").textContent = "Dispatch order"; return; }
+    if (ev.type === "error") { addEvent({ type: "text", agent: "server", ms: "", detail: ev.detail }, "heal"); return; }
+    if (ev.type === "result") return showResult(ev);
+    if (ev.agent === "planner_agent" && lastAgent !== "planner_agent") {
+      pass += 1;
+      if (pass > 1) { $("#loopTag").textContent = `Healing: pass ${pass} of 3`; document.querySelector('[data-agent="planner_agent"]').classList.add("healed"); }
+    }
+    lastAgent = ev.agent;
+    activate(ev.agent);
+    let cls = "";
+    const healText = ev.type === "text" && /^FEEDBACK/.test(ev.detail);
+    const invalid = ev.type === "response" && ev.name === "validate_plan" && /"valid": false/.test(ev.detail);
+    if (healText || invalid) { cls = "heal"; $("#loop").classList.add("healing"); }
+    if (ev.type === "text" && /^APPROVED/.test(ev.detail)) cls = "ok";
+    if (ev.type === "response" && /failover|retry|failed/i.test(ev.detail) && ev.name === "dispatch_shipment") cls = cls || "";
+    addEvent(ev, cls);
+  };
+  src.onerror = () => { src.close(); $("#go").disabled = false; $("#go").textContent = "Dispatch order"; };
+});
+
+function showResult(r) {
+  document.querySelectorAll(".st.active").forEach((s) => { s.classList.remove("active"); s.classList.add("done"); });
+  const d = r.dispatch || {}, o = r.order || {};
+  const ok = ["DISPATCHED", "PARTIAL"].includes(d.status);
+  const end = document.querySelector('[data-agent="__done"]');
+  if (ok) { end.classList.add("done"); document.querySelectorAll(".seg").forEach((s) => s.classList.add("lit")); }
+  $("#doneSmall").textContent = ok ? `${(r.ms / 1000).toFixed(2)} s end to end` : "escalated";
+  if (r.route) $("#plannerModel").textContent = r.route.replace(/^(\w+) \((.*)\)$/, "$2");
+  $("#routeTitle").textContent = ok ? `Shipped in ${(r.ms / 1000).toFixed(2)} s` : "Escalated to a person";
+  $("#loopTag").textContent = pass > 1 ? `Healed in ${pass} passes` : "Approved on the first pass";
+  const ships = d.shipments || [];
+  const legs = ships.map((s) => `${s.origin} → ${s.carrier} (${s.quantity})`).join(", ") || "–";
+  $("#label").innerHTML = `
+    <div class="head"><h3>${esc(o.order_id || "Order")}</h3><span class="status ${ok ? "ok" : "esc"}">${ok ? "Shipped" : "Escalated"}</span></div>
+    <dl>
+      <dt>Item</dt><dd>${esc(o.quantity)} × ${esc(o.sku)} to ${esc(o.destination_city)}</dd>
+      <dt>Promise</dt><dd>${esc(o.priority)}, ${esc(o.sla_days)} days</dd>
+      <dt>Legs</dt><dd>${esc(legs)}</dd>
+      <dt>Arrives in</dt><dd>${d.max_eta_days != null ? esc(d.max_eta_days) + " days" : "–"}</dd>
+      <dt>Cost</dt><dd>${d.total_cost_usd != null ? "$" + Number(d.total_cost_usd).toFixed(2) : "–"}</dd>
+      <dt>Complexity</dt><dd>${esc(o.complexity)}${o.complexity_reasons && o.complexity_reasons.length ? ": " + esc(o.complexity_reasons.join(", ")) : ""}</dd>
+      <dt>Planner model</dt><dd>${esc(r.route || "–")}</dd>
+      ${ok ? "" : `<dt>Reason</dt><dd>${esc(r.exit || "no valid plan")}</dd>`}
+    </dl>
+    ${ok ? `<div class="bars" aria-hidden="true"></div><div class="tid">${ships.map((s) => esc(s.tracking_id)).join("   ")}</div>` : ""}`;
+  const heals = r.heals || [];
+  $("#heals").innerHTML = heals.length
+    ? heals.map((h) => `<li><b>${esc(HEAL_LABELS[h.kind] || h.kind)}</b><br>${esc(h.detail)}</li>`).join("")
+    : `<li><b>No healing needed</b><br>Every API answered and the first plan passed.</li>`;
+}
+
+$("#sim").addEventListener("click", async () => {
+  const btn = $("#sim"); btn.disabled = true; btn.textContent = "Running…";
+  $("#simOut").innerHTML = `<p class="empty">Running ${$("#orders").value} orders…</p>`;
+  try {
+    const r = await (await fetch(`/api/simulate?orders=${$("#orders").value}&chaos=${$("#chaos2").value}`)).json();
+    const total = r.orders;
+    const stack = Object.entries(r.outcomes).map(([k, v]) =>
+      `<div style="width:${(v / total) * 100}%;background:${OUTCOME_COLORS[k] || "var(--muted)"}" title="${OUTCOME_NAMES[k] || k}: ${v}">${v / total > 0.12 ? `${OUTCOME_NAMES[k] || k} ${Math.round((v / total) * 100)}%` : ""}</div>`).join("");
+    const legend = Object.entries(r.outcomes).map(([k, v]) =>
+      `<span><i style="background:${OUTCOME_COLORS[k] || "var(--muted)"}"></i>${OUTCOME_NAMES[k] || k}: ${v}</span>`).join("");
+    const heals = Object.entries(r.heals).map(([k, v]) => `<span>${HEAL_LABELS[k] || k}: ${v}</span>`).join("");
+    $("#simOut").innerHTML = `
+      <div class="stack">${stack}</div><div class="legend">${legend}</div>
+      <div class="metrics">
+        <div class="metric"><b>${r.fulfilled}/${total}</b><span>shipped with ${pct(r.chaos)} API failures</span></div>
+        <div class="metric"><b>${r.throughput}</b><span>orders per second</span></div>
+        <div class="metric"><b>${r.p50_ms} ms</b><span>median per order (p95 ${r.p95_ms} ms)</span></div>
+        <div class="metric"><b>${Object.values(r.heals).reduce((a, b) => a + b, 0)}</b><span>failures healed automatically</span></div>
+      </div>
+      <h3 style="margin:18px 0 6px;font-size:1.15rem">What got healed</h3><div class="legend">${heals}</div>`;
+  } catch (e) {
+    $("#simOut").innerHTML = `<p class="empty">The batch didn’t finish: ${esc(e.message)}. Check the terminal running demo_server.py.</p>`;
+  }
+  btn.disabled = false; btn.textContent = "Run batch";
+});
+</script>
+</body>
+</html>

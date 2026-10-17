@@ -5,7 +5,7 @@
 Runs fully offline in mock mode (no API key) and on live Gemini with one key from Google AI Studio.
 
 ```bash
-pip install -r requirements.txt && python run_agent.py      # real ADK runtime, 3 scenarios, ~0.2 s/order
+pip install -r requirements.txt && python demo_server.py    # dashboard on http://localhost:8080
 ```
 
 ---
@@ -165,12 +165,15 @@ python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts
 pip install -r requirements.txt
 cp .env.example .env                                     # optional: add GOOGLE_API_KEY
 
+python demo_server.py                       # demo dashboard → http://localhost:8080
 python -m pytest -q                         # 10 tests incl. full ADK pipeline + MCP handshake
 python run_agent.py                         # 3 scenarios through the real ADK runtime
 SHIPMIND_CHAOS_RATE=0.3 python run_agent.py # same, with 30% of API + model calls failing
 python simulate.py --orders 1000 --workers 64 --chaos 0.35   # scale test
 adk web --port 8000 .                       # ADK dev UI → choose "logistics_agent"
 ```
+
+**Demo dashboard.** `python demo_server.py` opens a dispatch board at <http://localhost:8080>: pick one of three preset orders (or type your own), set an API-failure rate, and watch the order travel the agent route live. The heal loop lights up amber when the validator sends a plan back, and the result prints as a shipping label listing every failure that was healed. The scale panel runs up to 2,000 concurrent orders and charts the outcomes.
 
 **Mock vs live.** With no `GOOGLE_API_KEY`, a scripted LLM drives the **real** ADK runtime: transfers, parallel agents, loop escalation, MCP subprocess calls and carrier APIs are all real; only the reasoning is scripted. Add a key and the same graph runs on Gemini. Force either with `SHIPMIND_MOCK_LLM=true|false`.
 
@@ -209,6 +212,8 @@ shipmind/
 │   ├── carrier_apis.py     # mock carrier REST APIs + chaos injection
 │   ├── healing.py          # retry, circuit breaker, heal log
 │   ├── data.py · store.py · config.py
+├── demo_server.py          # demo dashboard server (streams agent events)
+├── demo/index.html         # dispatch-board UI
 ├── run_agent.py            # ADK runner with live trace
 ├── simulate.py             # scale + chaos simulator
 ├── tests/                  # engine, MCP, end-to-end ADK

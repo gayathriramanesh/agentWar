@@ -1,0 +1,9 @@
+.env
+.shipmind/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.adk/
+.DS_Store

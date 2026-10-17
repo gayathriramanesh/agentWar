@@ -89,6 +89,40 @@ def random_orders(n: int, seed: int) -> list[tuple]:
              rng.choices(list(data.PRIORITY), weights=[3, 5, 2])[0]) for i in range(n)]
 
 
+def run_simulation(orders: int = 200, workers: int = 32, chaos: float = 0.2, seed: int = 7,
+                   greedy_draft: bool = True) -> dict:
+    """Run a batch and return summary stats (used by the CLI and the demo dashboard)."""
+    Chaos.configure(chaos, seed)
+    BREAKER.reset()
+    snapshot = copy.deepcopy(data.INVENTORY)
+    for stock in data.INVENTORY.values():  # scale the network up for a big batch
+        for wh in stock:
+            stock[wh] *= max(1, orders // 20)
+    batch = random_orders(orders, seed)
+    t0 = time.perf_counter()
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(lambda o: process(o, greedy_draft), batch))
+    finally:
+        wall = time.perf_counter() - t0
+        data.INVENTORY.clear()
+        data.INVENTORY.update(snapshot)
+        Chaos.configure(config.CHAOS_RATE, config.CHAOS_SEED)
+        BREAKER.reset()
+    lat = sorted(r["ms"] for r in results)
+    statuses = Counter(r["status"] for r in results)
+    return {
+        "orders": orders, "workers": workers, "chaos": chaos,
+        "outcomes": dict(statuses.most_common()),
+        "heals": dict(Counter(h["kind"] for r in results for h in r["heal"]).most_common()),
+        "routing": dict(Counter(f"{r['complexity']} -> {r['model']}" for r in results).most_common()),
+        "wall_s": round(wall, 2), "throughput": round(len(results) / wall, 1),
+        "p50_ms": round(statistics.median(lat)), "p95_ms": round(lat[int(len(lat) * 0.95) - 1]),
+        "avg_iterations": round(statistics.mean(r["iterations"] for r in results), 2),
+        "fulfilled": statuses["DISPATCHED"] + statuses["PARTIAL"],
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--orders", type=int, default=200)
@@ -97,42 +131,23 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--no-greedy-draft", action="store_true", help="planner picks best carrier on first pass")
     args = ap.parse_args()
-
-    Chaos.configure(args.chaos, args.seed)
-    BREAKER.reset()
     store.reset()
-    snapshot = copy.deepcopy(data.INVENTORY)
-    for stock in data.INVENTORY.values():  # scale the network up for a big batch
-        for wh in stock:
-            stock[wh] *= max(1, args.orders // 20)
-
-    orders = random_orders(args.orders, args.seed)
     print(f"ShipMind load simulation: {args.orders} orders | {args.workers} workers | chaos {args.chaos:.0%}")
-    t0 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        results = list(ex.map(lambda o: process(o, not args.no_greedy_draft), orders))
-    wall = time.perf_counter() - t0
-    data.INVENTORY.clear()
-    data.INVENTORY.update(snapshot)
-
-    statuses = Counter(r["status"] for r in results)
-    heals = Counter(h["kind"] for r in results for h in r["heal"])
-    lat = sorted(r["ms"] for r in results)
-    shipped = statuses["DISPATCHED"] + statuses["PARTIAL"]
+    r = run_simulation(args.orders, args.workers, args.chaos, args.seed, not args.no_greedy_draft)
     print("\n── Outcomes " + "─" * 50)
-    for k, v in statuses.most_common():
-        print(f"  {k:<26}{v:>6}  ({v / len(results):.1%})")
+    for k, v in r["outcomes"].items():
+        print(f"  {k:<26}{v:>6}  ({v / r['orders']:.1%})")
     print("── Self-healing events " + "─" * 39)
-    for k, v in heals.most_common():
-        print(f"  {k:<22}{v:>6}")
+    for k, v in r["heals"].items():
+        print(f"  {k:<26}{v:>6}")
     print("── Model routing " + "─" * 45)
-    for k, v in Counter(f"{r['complexity']:<6} -> {r['model']}" for r in results).most_common():
+    for k, v in r["routing"].items():
         print(f"  {k:<40}{v:>6}")
     print("── Performance " + "─" * 47)
-    print(f"  wall time            {wall:8.2f} s   throughput {len(results) / wall:7.1f} orders/s")
-    print(f"  latency p50 / p95    {statistics.median(lat):6.0f} / {lat[int(len(lat) * 0.95) - 1]:.0f} ms per order")
-    print(f"  heal-loop iterations avg {statistics.mean(r['iterations'] for r in results):.2f}")
-    print(f"  fulfilled            {shipped}/{len(results)} despite {args.chaos:.0%} injected API failures")
+    print(f"  wall time            {r['wall_s']:8.2f} s   throughput {r['throughput']:7.1f} orders/s")
+    print(f"  latency p50 / p95    {r['p50_ms']:6d} / {r['p95_ms']} ms per order")
+    print(f"  heal-loop iterations avg {r['avg_iterations']:.2f}")
+    print(f"  fulfilled            {r['fulfilled']}/{r['orders']} despite {args.chaos:.0%} injected API failures")
 
 
 if __name__ == "__main__":

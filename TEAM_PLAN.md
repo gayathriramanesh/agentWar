@@ -1,5 +1,7 @@
 # ShipMind: 60-Minute Team Build Plan (3 people)
 
+> All commands below run inside the `shipmind/` folder: `cd shipmind` first.
+
 The repo already runs end to end (`pytest -q` → 10 passed, `python run_agent.py` → 3/3 dispatched).
 The hour is for **owning, going live on Gemini, extending, and demoing**, not starting from zero.
 
@@ -64,15 +66,14 @@ gh pr create --fill                  # or open the PR on github.com
 | Live LLM goes off-script | wrong tool args | Tools return `valid_options`; tighten the prompt in `prompts.py` |
 | Laptop dies | – | Every member can run the full demo from `main` |
 
-## 6. Demo script (3 minutes)
+## 6. Demo script (3 minutes), all in the dashboard
+Start it before you present: `python demo_server.py` → <http://localhost:8080> (it warms up for ~10 s).
 1. **Problem (30 s):** Amazon-scale order handling is a brittle chain of rules engines and human exception queues.
-2. **Happy path + healing (60 s):** `python run_agent.py`
-   - Boston: the cheapest carrier misses the SLA, the validator rejects it, the planner heals to UPS.
-   - Austin: the Dallas warehouse is in a storm, so the order is reallocated to Chicago.
-   - Chicago TVs: a split shipment is routed to the **Pro** model.
-3. **Chaos (45 s):** `SHIPMIND_CHAOS_RATE=0.3 python run_agent.py` shows retries, carrier fail-over and Gemini model fallback, and every order still ships.
-4. **Scale (30 s):** `python simulate.py --orders 1000 --chaos 0.35` gives ~96% fulfilled at ~150 orders/s, and the rest are correctly escalated.
-5. **Architecture + roadmap (15 s):** flowchart in README, path to production (§9).
+2. **Healing (60 s):** dispatch **1 Kindle → Boston**. The cheapest carrier misses the promise, the loop turns amber, and the planner fixes it on pass 2. Then dispatch **3 laptops → Austin**: the Dallas storm forces a reroute to Chicago.
+3. **Multi-model (15 s):** dispatch **8 TVs → Chicago**. The label shows the planner switched to the Pro model for a high-complexity split shipment.
+4. **Chaos (30 s):** set API failures to 30% and dispatch again. The label lists retries, carrier switches and model fallbacks, and the order still ships.
+5. **Scale (30 s):** Scale test, 1,000 orders at 35% failures: ~96% shipped at ~140 orders/s, and the rest are correctly escalated.
+6. **Architecture (15 s):** README flowchart and the path to production.
 
 ## 7. Definition of done
 - [ ] `python -m pytest -q` green on `main`
