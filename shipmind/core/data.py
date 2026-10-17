@@ -22,6 +22,9 @@ CITIES = {
     "Denver": (39.74, -104.99), "Phoenix": (33.45, -112.07), "Portland": (45.52, -122.68),
     "Los Angeles": (34.05, -118.24), "Houston": (29.76, -95.37),
 }
+# Common shorthand users type; resolved to the canonical city, never guessed beyond this list.
+CITY_ALIASES = {"nyc": "New York", "new york city": "New York", "la": "Los Angeles", "sf": "San Francisco",
+                "san fran": "San Francisco", "atl": "Atlanta"}
 
 # sku -> warehouse -> units on hand
 INVENTORY = {
@@ -31,6 +34,9 @@ INVENTORY = {
     "SKU-TV65": {"SEA1": 0, "SFO2": 0, "DFW7": 6, "ORD4": 4, "JFK8": 0, "ATL2": 0},
 }
 SKU_WEIGHT_KG = {"SKU-ECHO": 0.9, "SKU-KINDLE": 0.3, "SKU-LAPTOP": 2.5, "SKU-TV65": 15.0}
+# Words that ground a SKU in the user's text (used to catch hallucinated or substituted products).
+SKU_KEYWORDS = {"SKU-ECHO": ("echo", "alexa"), "SKU-KINDLE": ("kindle", "e-reader", "ereader"),
+                "SKU-LAPTOP": ("laptop", "notebook"), "SKU-TV65": ("tv65", "tv", "television")}
 
 # Carrier economics. `flaky` scales how often the mock API fails under chaos.
 CARRIERS = {
@@ -46,6 +52,11 @@ PRIORITY = {
     "standard": {"speed": 1.0, "handling_days": 1, "price_mult": 1.0, "sla_days": 5},
     "economy": {"speed": 0.7, "handling_days": 1, "price_mult": 0.75, "sla_days": 8},
 }
+
+# Words that ground a delivery priority in the user's text.
+PRIORITY_KEYWORDS = {"express": ("express", "urgent", "rush", "asap", "expedited"),
+                     "standard": ("standard", "normal", "regular"),
+                     "economy": ("economy", "cheapest", "budget", "slow", "no rush")}
 
 # Scoring weights per priority (lower score wins).
 SCORE_WEIGHTS = {

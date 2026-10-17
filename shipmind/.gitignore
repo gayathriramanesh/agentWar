@@ -7,3 +7,6 @@ __pycache__/
 venv/
 .adk/
 .DS_Store
+evals/results/
+*.db-wal
+*.db-shm

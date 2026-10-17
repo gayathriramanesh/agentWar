@@ -2,7 +2,7 @@
 
 1. model_for(role): every agent gets a FallbackModel chain, so a 429/5xx on one model is
    answered by the next one (model-level self-healing). LiteLLM ids ("openai/...") are supported
-   for a cross-vendor validator.
+   for any tier (cross-vendor models).
 2. ComplexityRoutedModel + route_by_complexity: the planner picks its chain per request:
    deep reasoning model only for high-complexity orders, fast model otherwise (latency + cost).
 """
@@ -70,8 +70,16 @@ def routed_planner_model() -> ComplexityRoutedModel:
 
 
 def route_by_complexity(callback_context, llm_request):
-    """before_model_callback: choose the planner's model tier from the order's complexity."""
+    """before_model_callback: choose the planner's model tier from the order's complexity.
+
+    Token economics: once an order has spent BUDGET_DOWNGRADE_AT of its budget, the deep tier is dropped.
+    """
+    from .economics import over_downgrade_threshold
+
     route = route_for_complexity(callback_context.state.get("complexity", "medium"))
+    if route == "deep" and over_downgrade_threshold(callback_context):
+        route = "balanced"
+        callback_context.state["budget_downgrade"] = True
     _route.set(route)
     callback_context.state["planner_model_route"] = f"{route} ({MODELS[route]})"
     return None

@@ -26,10 +26,11 @@ logging.getLogger("google_adk").setLevel(logging.ERROR)
 from google.adk.runners import InMemoryRunner  # noqa: E402
 from google.genai import types  # noqa: E402
 
-from core import config, data, store  # noqa: E402
+from core import config, data, logistics, store  # noqa: E402
 from core.carrier_apis import Chaos  # noqa: E402
 from core.healing import BREAKER  # noqa: E402
-from logistics_agent.agent import root_agent  # noqa: E402
+from logistics_agent.agent import app  # noqa: E402
+from logistics_agent.economics import order_usage  # noqa: E402
 
 import simulate  # noqa: E402
 
@@ -40,7 +41,7 @@ INVENTORY_SNAPSHOT = copy.deepcopy(data.INVENTORY)
 # One event loop + one runner for the whole server: the MCP subprocess starts once and stays warm.
 LOOP = asyncio.new_event_loop()
 threading.Thread(target=LOOP.run_forever, daemon=True).start()
-RUNNER = InMemoryRunner(agent=root_agent, app_name="shipmind")
+RUNNER = InMemoryRunner(app=app)
 RUN_LOCK = threading.Lock()  # one demo run at a time keeps the board readable
 
 
@@ -53,11 +54,12 @@ def _reset_world(chaos: float) -> None:
     data.INVENTORY.clear()
     data.INVENTORY.update(copy.deepcopy(INVENTORY_SNAPSHOT))
     BREAKER.reset()
+    logistics.clear_quote_cache()
     Chaos.configure(chaos, config.CHAOS_SEED)
 
 
 async def _run(prompt: str, out: queue.Queue) -> None:
-    session = await RUNNER.session_service.create_session(app_name="shipmind", user_id="demo")
+    session = await RUNNER.session_service.create_session(app_name=app.name, user_id="demo")
     t0 = time.perf_counter()
     async for ev in RUNNER.run_async(user_id="demo", session_id=session.id,
                                      new_message=types.Content(role="user", parts=[types.Part(text=prompt)])):
@@ -72,7 +74,7 @@ async def _run(prompt: str, out: queue.Queue) -> None:
             elif p.text and not getattr(p, "thought", False):
                 out.put({"type": "text", "agent": ev.author, "ms": ms, "detail": _trim(p.text.strip(), 600)})
     state = (await RUNNER.session_service.get_session(
-        app_name="shipmind", user_id="demo", session_id=session.id)).state
+        app_name=app.name, user_id="demo", session_id=session.id)).state
     heals = list(state.get("heal_log") or [])
     if config.MOCK_LLM:
         from logistics_agent.mock_llm import MODEL_HEAL_EVENTS
@@ -81,7 +83,10 @@ async def _run(prompt: str, out: queue.Queue) -> None:
         MODEL_HEAL_EVENTS.clear()
     out.put({"type": "result", "ms": round((time.perf_counter() - t0) * 1000),
              "order": state.get("order"), "dispatch": state.get("dispatch"), "plan": state.get("plan"),
-             "route": state.get("planner_model_route"), "exit": state.get("loop_exit_reason"),
+             "route": state.get("planner_model_route"),
+             "exit": state.get("loop_exit_reason") or (state.get("outcome") or {}).get("reason"),
+             "outcome": state.get("outcome"), "guardrail": state.get("guardrail_verdict"),
+             "usage": order_usage(state), "report": state.get("final_report"),
              "notification": state.get("customer_notification"), "heals": heals})
 
 

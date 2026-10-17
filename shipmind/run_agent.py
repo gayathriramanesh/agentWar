@@ -22,7 +22,8 @@ from google.adk.runners import InMemoryRunner  # noqa: E402
 from google.genai import types  # noqa: E402
 
 from core import config, store  # noqa: E402
-from logistics_agent.agent import root_agent  # noqa: E402
+from logistics_agent.agent import app  # noqa: E402
+from logistics_agent.economics import order_usage  # noqa: E402
 
 DEMO = [
     "Ship 1 Kindle to Boston, economy please. Order ORD-2001.",
@@ -39,11 +40,11 @@ def _short(obj, n=150) -> str:
 async def run(prompts: list[str]) -> int:
     mode = "MOCK (scripted LLM, real ADK runtime)" if config.MOCK_LLM else "LIVE Gemini"
     print(f"ShipMind | mode: {mode} | MCP: {config.USE_MCP} | models: {config.MODELS}\n")
-    runner = InMemoryRunner(agent=root_agent, app_name="shipmind")
+    runner = InMemoryRunner(app=app)
     ok = 0
     try:
         for prompt in prompts:
-            session = await runner.session_service.create_session(app_name="shipmind", user_id="ops")
+            session = await runner.session_service.create_session(app_name=app.name, user_id="ops")
             print("=" * 100 + f"\nUSER: {prompt}\n" + "-" * 100)
             t0 = time.perf_counter()
             async for ev in runner.run_async(user_id="ops", session_id=session.id,
@@ -57,13 +58,19 @@ async def run(prompts: list[str]) -> int:
                     elif p.text and not getattr(p, "thought", False):
                         print(f"[{ms:7.0f}ms] {ev.author:<18} : {_short(p.text.strip(), 400)}")
             state = (await runner.session_service.get_session(
-                app_name="shipmind", user_id="ops", session_id=session.id)).state
+                app_name=app.name, user_id="ops", session_id=session.id)).state
             d = state.get("dispatch") or {}
             heals = state.get("heal_log") or []
+            outcome = state.get("outcome") or {}
+            usage = order_usage(state)
             print("-" * 100)
-            print(f"RESULT: {d.get('status', state.get('loop_exit_reason', 'n/a'))} | planner model: "
-                  f"{state.get('planner_model_route')} | self-heal events: {len(heals)} | "
-                  f"{(time.perf_counter() - t0) * 1000:.0f} ms")
+            print(f"RESULT: {outcome.get('status', 'n/a')} | planner: {state.get('planner_model_route')} | "
+                  f"self-heal events: {len(heals)} | {(time.perf_counter() - t0) * 1000:.0f} ms")
+            print(f"TOKENS: {usage['calls']} LLM calls | {usage['input']} in / {usage['output']} out "
+                  f"({usage['cached']} cached) | ${usage['cost_usd']:.5f} | budget {usage['budget']}"
+                  + ("  [estimated: mock LLM]" if config.MOCK_LLM else ""))
+            if state.get("final_report"):
+                print(state["final_report"])
             for h in heals:
                 print(f"   ⟲ {h['kind']}: {h['detail']}")
             if config.MOCK_LLM:
